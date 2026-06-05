@@ -1,57 +1,63 @@
 import { NextRequest, NextResponse } from 'next/server';
-import yahooFinance from 'yahoo-finance2';
 
 export const runtime = 'nodejs';
+
+const YF = 'https://query1.finance.yahoo.com';
+const HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Accept': 'application/json',
+  'Accept-Language': 'en-US,en;q=0.9',
+};
 
 export async function GET(
   _req: NextRequest,
   { params }: { params: { ticker: string } }
 ) {
-  const ticker = params.ticker.toUpperCase();
+  const ticker = params.ticker.toUpperCase().trim();
 
   try {
-    const [quote, summary, searchResult] = await Promise.allSettled([
-      yahooFinance.quote(ticker),
-      yahooFinance.quoteSummary(ticker, {
-        modules: ['price', 'summaryDetail', 'defaultKeyStatistics', 'calendarEvents', 'earningsTrend', 'earningsHistory'],
-      }),
-      yahooFinance.search(ticker, { newsCount: 5, quotesCount: 0 }),
+    const [summaryRes, searchRes] = await Promise.all([
+      fetch(
+        `${YF}/v11/finance/quoteSummary/${ticker}?modules=price,summaryDetail,defaultKeyStatistics,calendarEvents,earningsTrend,earningsHistory`,
+        { headers: HEADERS }
+      ),
+      fetch(
+        `${YF}/v1/finance/search?q=${ticker}&newsCount=5&quotesCount=1&enableFuzzyQuery=false`,
+        { headers: HEADERS }
+      ),
     ]);
 
-    if (quote.status === 'rejected') {
+    const summaryJson = await summaryRes.json();
+    const searchJson = await searchRes.json();
+
+    if (summaryJson.quoteSummary?.error || !summaryJson.quoteSummary?.result?.[0]) {
       return NextResponse.json({ error: `Ticker "${ticker}" not found.` }, { status: 404 });
     }
 
-    const q = quote.value;
-    const s = summary.status === 'fulfilled' ? summary.value : null;
-    const news = searchResult.status === 'fulfilled' ? searchResult.value.news ?? [] : [];
+    const r = summaryJson.quoteSummary.result[0];
+    const price_mod = r.price ?? {};
+    const detail = r.summaryDetail ?? {};
+    const calendar = r.calendarEvents ?? {};
+    const trend = r.earningsTrend?.trend ?? [];
+    const history = r.earningsHistory?.history ?? [];
 
-    const price = q.regularMarketPrice ?? null;
+    const price = price_mod.regularMarketPrice?.raw ?? null;
+    const changePct = price_mod.regularMarketChangePercent?.raw ?? null;
 
-    // Forward PE estimates by year from earningsTrend
+    // Forward PE by year from earningsTrend
     let fwdPE2026: number | null = null;
-    let fwdPE2028: number | null = null;
-
     try {
-      const trends = s?.earningsTrend?.trend ?? [];
-      for (const t of trends) {
-        const eps = t.earningsEstimate?.avg ?? null;
-        if (eps && price) {
-          if (t.period === '0y') fwdPE2026 = parseFloat((price / eps).toFixed(1));
-          if (t.period === '+1y') {
-            // +1y from today (mid-2026) ≈ 2027 — label honestly
-            // We'll return it as fwdEpsPlus1yr for the UI to label
-          }
-        }
-      }
+      const curr = trend.find((t: any) => t.period === '0y');
+      const eps0y = curr?.earningsEstimate?.avg?.raw;
+      if (eps0y && price) fwdPE2026 = parseFloat((price / eps0y).toFixed(1));
     } catch {}
 
     // Next earnings date
     let nextEarnings: string | null = null;
     try {
-      const dates = s?.calendarEvents?.earnings?.earningsDate ?? [];
-      if (dates.length > 0) {
-        nextEarnings = new Date(dates[0] as Date).toLocaleDateString('en-US', {
+      const dates = calendar.earnings?.earningsDate ?? [];
+      if (dates[0]?.raw) {
+        nextEarnings = new Date(dates[0].raw * 1000).toLocaleDateString('en-US', {
           year: 'numeric', month: 'short', day: 'numeric',
         });
       }
@@ -61,43 +67,48 @@ export async function GET(
     let latestEpsActual: number | null = null;
     let latestEpsPeriod: string | null = null;
     try {
-      const history = s?.earningsHistory?.history ?? [];
       if (history.length > 0) {
         const latest = history[history.length - 1];
-        latestEpsActual = latest.epsActual ?? null;
-        latestEpsPeriod = latest.quarter
-          ? new Date(latest.quarter as Date).toLocaleDateString('en-US', { year: 'numeric', month: 'short' })
-          : null;
+        latestEpsActual = latest.epsActual?.raw ?? null;
+        if (latest.quarter?.raw) {
+          latestEpsPeriod = new Date(latest.quarter.raw * 1000).toLocaleDateString('en-US', {
+            year: 'numeric', month: 'short',
+          });
+        }
       }
     } catch {}
 
+    // News
+    const news = (searchJson.news ?? []).slice(0, 5).map((n: any) => ({
+      title: n.title ?? '',
+      url: n.link ?? '',
+      source: n.publisher ?? '',
+      time: n.providerPublishTime
+        ? new Date(n.providerPublishTime * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+        : null,
+    }));
+
     return NextResponse.json({
       ticker,
-      name: q.longName ?? q.shortName ?? ticker,
+      name: price_mod.longName ?? price_mod.shortName ?? ticker,
       price,
-      changePct: q.regularMarketChangePercent ?? null,
-      trailingPE: q.trailingPE ?? s?.summaryDetail?.trailingPE ?? null,
-      forwardPE: q.forwardPE ?? null,           // NTM forward PE
-      fwdPE2026,                                 // current-year EPS estimate PE
-      fwdPE2028,                                 // null — not available from Yahoo free data
-      trailingEps: q.epsTrailingTwelveMonths ?? null,
-      forwardEps: q.epsForward ?? null,
+      changePct,
+      trailingPE: detail.trailingPE?.raw ?? null,
+      forwardPE: detail.forwardPE?.raw ?? null,
+      fwdPE2026,
+      fwdPE2028: null, // not available from Yahoo Finance free data
+      trailingEps: price_mod.epsTrailingTwelveMonths?.raw ?? null,
+      forwardEps: price_mod.epsForward?.raw ?? null,
       latestEpsActual,
       latestEpsPeriod,
       nextEarnings,
-      marketCap: q.marketCap ?? null,
-      sector: q.sector ?? null,
-      fiftyTwoWeekHigh: q.fiftyTwoWeekHigh ?? null,
-      fiftyTwoWeekLow: q.fiftyTwoWeekLow ?? null,
-      news: news.slice(0, 5).map((n: any) => ({
-        title: n.title,
-        url: n.link,
-        source: n.publisher,
-        time: n.providerPublishTime
-          ? new Date(n.providerPublishTime * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-          : null,
-      })),
+      marketCap: price_mod.marketCap?.raw ?? null,
+      sector: price_mod.sector ?? null,
+      fiftyTwoWeekHigh: detail.fiftyTwoWeekHigh?.raw ?? null,
+      fiftyTwoWeekLow: detail.fiftyTwoWeekLow?.raw ?? null,
+      news,
     });
+
   } catch (err: any) {
     console.error(err);
     return NextResponse.json({ error: err.message ?? 'Unknown error' }, { status: 500 });
