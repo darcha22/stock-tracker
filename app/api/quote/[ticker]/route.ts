@@ -2,12 +2,22 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export const runtime = 'nodejs';
 
-const YF = 'https://query1.finance.yahoo.com';
-const HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  'Accept': 'application/json',
-  'Accept-Language': 'en-US,en;q=0.9',
-};
+const API_KEY = process.env.FINNHUB_API_KEY ?? '';
+const BASE = 'https://finnhub.io/api/v1';
+
+async function fh(path: string) {
+  const res = await fetch(`${BASE}${path}&token=${API_KEY}`, {
+    headers: { 'X-Finnhub-Token': API_KEY },
+    next: { revalidate: 300 }, // cache 5 min
+  });
+  if (!res.ok) throw new Error(`Finnhub error: ${res.status}`);
+  return res.json();
+}
+
+function round(n: number | null | undefined, d = 2): number | null {
+  if (n == null || isNaN(n)) return null;
+  return parseFloat(n.toFixed(d));
+}
 
 export async function GET(
   _req: NextRequest,
@@ -15,98 +25,96 @@ export async function GET(
 ) {
   const ticker = params.ticker.toUpperCase().trim();
 
+  if (!API_KEY) {
+    return NextResponse.json({ error: 'FINNHUB_API_KEY not set in environment variables.' }, { status: 500 });
+  }
+
   try {
-    const [summaryRes, searchRes] = await Promise.all([
-      fetch(
-        `${YF}/v11/finance/quoteSummary/${ticker}?modules=price,summaryDetail,defaultKeyStatistics,calendarEvents,earningsTrend,earningsHistory`,
-        { headers: HEADERS }
-      ),
-      fetch(
-        `${YF}/v1/finance/search?q=${ticker}&newsCount=5&quotesCount=1&enableFuzzyQuery=false`,
-        { headers: HEADERS }
-      ),
+    const today = new Date();
+    const from = new Date(today);
+    from.setDate(today.getDate() - 7);
+    const toStr = today.toISOString().slice(0, 10);
+    const fromStr = from.toISOString().slice(0, 10);
+
+    const [quote, profile, metrics, news, earnings] = await Promise.all([
+      fh(`/quote?symbol=${ticker}`),
+      fh(`/stock/profile2?symbol=${ticker}`),
+      fh(`/stock/metric?symbol=${ticker}&metric=all`),
+      fh(`/company-news?symbol=${ticker}&from=${fromStr}&to=${toStr}`),
+      fh(`/calendar/earnings?symbol=${ticker}`),
     ]);
 
-    const summaryJson = await summaryRes.json();
-    const searchJson = await searchRes.json();
-
-    if (summaryJson.quoteSummary?.error || !summaryJson.quoteSummary?.result?.[0]) {
+    if (!quote.c || quote.c === 0) {
       return NextResponse.json({ error: `Ticker "${ticker}" not found.` }, { status: 404 });
     }
 
-    const r = summaryJson.quoteSummary.result[0];
-    const price_mod = r.price ?? {};
-    const detail = r.summaryDetail ?? {};
-    const calendar = r.calendarEvents ?? {};
-    const trend = r.earningsTrend?.trend ?? [];
-    const history = r.earningsHistory?.history ?? [];
+    const price = quote.c;
+    const m = metrics.metric ?? {};
 
-    const price = price_mod.regularMarketPrice?.raw ?? null;
-    const changePct = price_mod.regularMarketChangePercent?.raw ?? null;
+    // PE ratios
+    const trailingPE = round(m.peTTM ?? m.peNormalizedAnnual);
+    const forwardPE = round(m.forwardPE ?? null);
 
-    // Forward PE by year from earningsTrend
+    // Fwd PE 2026: price / forward EPS estimate if available
     let fwdPE2026: number | null = null;
-    try {
-      const curr = trend.find((t: any) => t.period === '0y');
-      const eps0y = curr?.earningsEstimate?.avg?.raw;
-      if (eps0y && price) fwdPE2026 = parseFloat((price / eps0y).toFixed(1));
-    } catch {}
+    const fwdEps = m.epsForward ?? m['epsNormalizedAnnual'];
+    if (fwdEps && price) fwdPE2026 = round(price / fwdEps);
 
     // Next earnings date
     let nextEarnings: string | null = null;
     try {
-      const dates = calendar.earnings?.earningsDate ?? [];
-      if (dates[0]?.raw) {
-        nextEarnings = new Date(dates[0].raw * 1000).toLocaleDateString('en-US', {
+      const upcoming = (earnings.earningsCalendar ?? [])
+        .filter((e: any) => e.date >= toStr)
+        .sort((a: any, b: any) => a.date.localeCompare(b.date));
+      if (upcoming[0]) {
+        nextEarnings = new Date(upcoming[0].date).toLocaleDateString('en-US', {
           year: 'numeric', month: 'short', day: 'numeric',
         });
       }
     } catch {}
 
-    // Latest reported EPS
+    // Latest EPS
     let latestEpsActual: number | null = null;
     let latestEpsPeriod: string | null = null;
     try {
-      if (history.length > 0) {
-        const latest = history[history.length - 1];
-        latestEpsActual = latest.epsActual?.raw ?? null;
-        if (latest.quarter?.raw) {
-          latestEpsPeriod = new Date(latest.quarter.raw * 1000).toLocaleDateString('en-US', {
-            year: 'numeric', month: 'short',
-          });
-        }
+      const past = (earnings.earningsCalendar ?? [])
+        .filter((e: any) => e.date < toStr && e.epsActual != null)
+        .sort((a: any, b: any) => b.date.localeCompare(a.date));
+      if (past[0]) {
+        latestEpsActual = round(past[0].epsActual);
+        latestEpsPeriod = new Date(past[0].date).toLocaleDateString('en-US', { year: 'numeric', month: 'short' });
       }
     } catch {}
 
-    // News
-    const news = (searchJson.news ?? []).slice(0, 5).map((n: any) => ({
-      title: n.title ?? '',
-      url: n.link ?? '',
-      source: n.publisher ?? '',
-      time: n.providerPublishTime
-        ? new Date(n.providerPublishTime * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    // News (top 5)
+    const newsItems = (Array.isArray(news) ? news : []).slice(0, 5).map((n: any) => ({
+      title: n.headline ?? '',
+      url: n.url ?? '',
+      source: n.source ?? '',
+      time: n.datetime
+        ? new Date(n.datetime * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
         : null,
     }));
 
     return NextResponse.json({
       ticker,
-      name: price_mod.longName ?? price_mod.shortName ?? ticker,
-      price,
-      changePct,
-      trailingPE: detail.trailingPE?.raw ?? null,
-      forwardPE: detail.forwardPE?.raw ?? null,
+      name: profile.name ?? ticker,
+      price: round(price),
+      changePct: round(((quote.c - quote.pc) / quote.pc) * 100),
+      trailingPE,
+      forwardPE,
       fwdPE2026,
-      fwdPE2028: null, // not available from Yahoo Finance free data
-      trailingEps: price_mod.epsTrailingTwelveMonths?.raw ?? null,
-      forwardEps: price_mod.epsForward?.raw ?? null,
+      fwdPE2028: null,
+      trailingEps: round(m.epsTTM ?? m.epsNormalizedAnnual),
+      forwardEps: round(fwdEps),
       latestEpsActual,
       latestEpsPeriod,
       nextEarnings,
-      marketCap: price_mod.marketCap?.raw ?? null,
-      sector: price_mod.sector ?? null,
-      fiftyTwoWeekHigh: detail.fiftyTwoWeekHigh?.raw ?? null,
-      fiftyTwoWeekLow: detail.fiftyTwoWeekLow?.raw ?? null,
-      news,
+      marketCap: profile.marketCapitalization ? Math.round(profile.marketCapitalization * 1e6) : null,
+      sector: profile.finnhubIndustry ?? null,
+      fiftyTwoWeekHigh: round(m['52WeekHigh']),
+      fiftyTwoWeekLow: round(m['52WeekLow']),
+      news: newsItems,
     });
 
   } catch (err: any) {
