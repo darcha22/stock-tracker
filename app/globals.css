@@ -8,7 +8,9 @@
   --border: #27272a;
   --text: #fafafa;
   --muted: #71717a;
-  --accent: #6366f1;
+  --orange: #D97757;
+  --orange-dark: #b85e3f;
+  --orange-glow: rgba(217, 119, 87, 0.15);
   --green: #22c55e;
   --red: #ef4444;
 }

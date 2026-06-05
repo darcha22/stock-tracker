@@ -31,6 +31,12 @@ interface StockData {
   news: NewsItem[];
 }
 
+interface CardPrice {
+  price: number | null;
+  changePct: number | null;
+  loading: boolean;
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const fmt = (n: number | null, decimals = 2) =>
   n == null ? '—' : n.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
@@ -46,12 +52,12 @@ const fmtCap = (n: number | null) => {
 
 const DEFAULT_TICKERS = ['AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN'];
 
-// ─── Overlay wrapper ──────────────────────────────────────────────────────────
+// ─── Overlay ──────────────────────────────────────────────────────────────────
 function Overlay({ onClose, children }: { onClose: () => void; children: React.ReactNode }) {
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(4px)' }}
+      style={{ background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(6px)' }}
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       {children}
@@ -88,7 +94,7 @@ function StockModal({ data, onClose }: { data: StockData; onClose: () => void })
   return (
     <div
       className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl p-6"
-      style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}
+      style={{ background: 'var(--surface)', border: '1px solid var(--orange)' }}
     >
       {/* Header */}
       <div className="flex items-start justify-between mb-5">
@@ -96,21 +102,21 @@ function StockModal({ data, onClose }: { data: StockData; onClose: () => void })
           <div className="flex items-center gap-3 mb-1">
             <span className="text-2xl font-bold">{data.ticker}</span>
             {data.sector && (
-              <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: 'var(--border)', color: 'var(--muted)' }}>
+              <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: 'var(--orange-glow)', color: 'var(--orange)', border: '1px solid var(--orange)' }}>
                 {data.sector}
               </span>
             )}
           </div>
           <p className="text-sm" style={{ color: 'var(--muted)' }}>{data.name}</p>
         </div>
-        <button onClick={onClose} className="text-2xl leading-none" style={{ color: 'var(--muted)' }}>×</button>
+        <button onClick={onClose} className="text-2xl leading-none transition-opacity hover:opacity-60" style={{ color: 'var(--muted)' }}>×</button>
       </div>
 
       {/* Price */}
       <div className="flex items-end gap-3 mb-6">
         <span className="text-4xl font-bold">${fmt(data.price)}</span>
-        <span className="text-lg font-medium mb-0.5" style={{ color: up ? 'var(--green)' : 'var(--red)' }}>
-          {up ? '+' : ''}{fmt(data.changePct, 2)}%
+        <span className="text-lg font-semibold mb-0.5" style={{ color: up ? 'var(--green)' : 'var(--red)' }}>
+          {up ? '▲' : '▼'} {up ? '+' : ''}{fmt(data.changePct, 2)}%
         </span>
       </div>
 
@@ -121,26 +127,26 @@ function StockModal({ data, onClose }: { data: StockData; onClose: () => void })
 
       {/* Earnings */}
       <div className="rounded-xl p-4 mb-6" style={{ background: 'var(--bg)', border: '1px solid var(--border)' }}>
-        <p className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--muted)' }}>Earnings</p>
+        <p className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--orange)' }}>Earnings</p>
         <div className="flex gap-8 flex-wrap">
           <div>
             <p className="text-xs" style={{ color: 'var(--muted)' }}>
               Latest EPS{data.latestEpsPeriod ? ` (${data.latestEpsPeriod})` : ''}
             </p>
-            <p className="font-semibold mt-0.5">
+            <p className="font-semibold mt-0.5 text-lg">
               {data.latestEpsActual != null ? `$${fmt(data.latestEpsActual)}` : '—'}
             </p>
           </div>
           <div>
             <p className="text-xs" style={{ color: 'var(--muted)' }}>Next Earnings Date</p>
-            <p className="font-semibold mt-0.5">{data.nextEarnings ?? '—'}</p>
+            <p className="font-semibold mt-0.5 text-lg">{data.nextEarnings ?? '—'}</p>
           </div>
         </div>
       </div>
 
       {/* News */}
       <div>
-        <p className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--muted)' }}>Latest News</p>
+        <p className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--orange)' }}>Latest News</p>
         {data.news.length === 0 ? (
           <p className="text-sm" style={{ color: 'var(--muted)' }}>No news available.</p>
         ) : (
@@ -151,7 +157,7 @@ function StockModal({ data, onClose }: { data: StockData; onClose: () => void })
                   href={n.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="block rounded-xl p-3 text-sm transition-opacity hover:opacity-80"
+                  className="block rounded-xl p-3 text-sm transition-opacity hover:opacity-75"
                   style={{ background: 'var(--border)' }}
                 >
                   <p className="font-medium leading-snug mb-1">{n.title}</p>
@@ -168,10 +174,61 @@ function StockModal({ data, onClose }: { data: StockData; onClose: () => void })
   );
 }
 
+// ─── Ticker Card ──────────────────────────────────────────────────────────────
+function TickerCard({
+  ticker,
+  cardPrice,
+  onRemove,
+  onClick,
+}: {
+  ticker: string;
+  cardPrice: CardPrice;
+  onRemove: () => void;
+  onClick: () => void;
+}) {
+  const up = (cardPrice.changePct ?? 0) >= 0;
+
+  return (
+    <div
+      onClick={onClick}
+      className="relative group cursor-pointer rounded-2xl p-5 transition-all duration-200 hover:scale-105 hover:brightness-110 active:scale-100"
+      style={{
+        background: 'linear-gradient(135deg, var(--orange) 0%, var(--orange-dark) 100%)',
+        boxShadow: '0 4px 20px var(--orange-glow)',
+      }}
+    >
+      <button
+        onClick={(e) => { e.stopPropagation(); onRemove(); }}
+        className="absolute top-2 right-2 w-5 h-5 flex items-center justify-center rounded-full text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+        style={{ color: 'rgba(255,255,255,0.9)', background: 'rgba(0,0,0,0.25)' }}
+        title="Remove"
+      >
+        ×
+      </button>
+
+      <p className="text-xl font-bold text-white">{ticker}</p>
+
+      {cardPrice.loading ? (
+        <div className="mt-2 h-4 w-16 rounded animate-pulse" style={{ background: 'rgba(255,255,255,0.2)' }} />
+      ) : cardPrice.price != null ? (
+        <>
+          <p className="text-white font-semibold mt-1 text-lg">${fmt(cardPrice.price)}</p>
+          <p className="text-sm font-medium mt-0.5" style={{ color: up ? '#bbf7d0' : '#fecaca' }}>
+            {up ? '▲' : '▼'} {up ? '+' : ''}{fmt(cardPrice.changePct, 2)}%
+          </p>
+        </>
+      ) : (
+        <p className="text-xs mt-2" style={{ color: 'rgba(255,255,255,0.6)' }}>Tap for details</p>
+      )}
+    </div>
+  );
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 export default function Home() {
   const [tickers, setTickers] = useState<string[]>([]);
   const [input, setInput] = useState('');
+  const [cardPrices, setCardPrices] = useState<Record<string, CardPrice>>({});
   const [selected, setSelected] = useState<string | null>(null);
   const [stockData, setStockData] = useState<StockData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -181,6 +238,19 @@ export default function Home() {
     const saved = localStorage.getItem('stock-tickers');
     setTickers(saved ? JSON.parse(saved) : DEFAULT_TICKERS);
   }, []);
+
+  // Fetch card prices whenever tickers change
+  useEffect(() => {
+    if (tickers.length === 0) return;
+    tickers.forEach((t) => {
+      if (cardPrices[t]) return; // already fetched
+      setCardPrices((prev) => ({ ...prev, [t]: { price: null, changePct: null, loading: true } }));
+      fetch(`/api/price/${t}`)
+        .then((r) => r.json())
+        .then((d) => setCardPrices((prev) => ({ ...prev, [t]: { price: d.price, changePct: d.changePct, loading: false } })))
+        .catch(() => setCardPrices((prev) => ({ ...prev, [t]: { price: null, changePct: null, loading: false } })));
+    });
+  }, [tickers]);
 
   // Close on Escape
   useEffect(() => {
@@ -201,7 +271,10 @@ export default function Home() {
     setInput('');
   };
 
-  const removeTicker = (t: string) => saveTickers(tickers.filter((x) => x !== t));
+  const removeTicker = (t: string) => {
+    saveTickers(tickers.filter((x) => x !== t));
+    setCardPrices((prev) => { const n = { ...prev }; delete n[t]; return n; });
+  };
 
   const openStock = useCallback(async (ticker: string) => {
     setSelected(ticker);
@@ -224,9 +297,12 @@ export default function Home() {
 
   return (
     <main className="min-h-screen p-6 sm:p-10 max-w-5xl mx-auto">
+      {/* Header */}
       <div className="mb-10">
-        <h1 className="text-3xl font-bold mb-1">Stock Tracker</h1>
-        <p className="text-sm" style={{ color: 'var(--muted)' }}>Click any ticker for today's update</p>
+        <h1 className="text-4xl font-bold mb-2">
+          Stock <span style={{ color: 'var(--orange)' }}>Tracker</span>
+        </h1>
+        <p className="text-sm" style={{ color: 'var(--muted)' }}>Click any ticker for today's full update</p>
       </div>
 
       {/* Add ticker */}
@@ -243,7 +319,7 @@ export default function Home() {
         <button
           onClick={addTicker}
           className="px-5 py-3 rounded-xl text-sm font-semibold transition-opacity hover:opacity-80"
-          style={{ background: 'var(--accent)', color: '#fff' }}
+          style={{ background: 'var(--orange)', color: '#fff' }}
         >
           Add
         </button>
@@ -253,25 +329,15 @@ export default function Home() {
       {tickers.length === 0 ? (
         <p className="text-sm" style={{ color: 'var(--muted)' }}>No tickers yet. Add one above.</p>
       ) : (
-        <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+        <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
           {tickers.map((t) => (
-            <div
+            <TickerCard
               key={t}
-              className="relative group cursor-pointer rounded-2xl p-5 transition-all hover:scale-105 hover:brightness-110 active:scale-100"
-              style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}
+              ticker={t}
+              cardPrice={cardPrices[t] ?? { price: null, changePct: null, loading: true }}
+              onRemove={() => removeTicker(t)}
               onClick={() => openStock(t)}
-            >
-              <button
-                onClick={(e) => { e.stopPropagation(); removeTicker(t); }}
-                className="absolute top-2 right-2 w-5 h-5 flex items-center justify-center rounded-full text-xs opacity-0 group-hover:opacity-100 transition-opacity"
-                style={{ color: 'var(--muted)', background: 'var(--border)' }}
-                title="Remove"
-              >
-                ×
-              </button>
-              <p className="text-xl font-bold">{t}</p>
-              <p className="text-xs mt-1" style={{ color: 'var(--muted)' }}>View update →</p>
-            </div>
+            />
           ))}
         </div>
       )}
@@ -283,7 +349,7 @@ export default function Home() {
             <div className="flex flex-col items-center justify-center py-16">
               <div
                 className="w-8 h-8 rounded-full border-2 animate-spin mb-4"
-                style={{ borderColor: 'var(--accent)', borderTopColor: 'transparent' }}
+                style={{ borderColor: 'var(--orange)', borderTopColor: 'transparent' }}
               />
               <p style={{ color: 'var(--muted)' }}>Fetching {selected}…</p>
             </div>

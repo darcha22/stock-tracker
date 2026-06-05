@@ -55,10 +55,10 @@ export async function GET(
     const trailingPE = round(m.peTTM ?? m.peNormalizedAnnual);
     const forwardPE = round(m.forwardPE ?? null);
 
-    // Fwd PE 2026: price / forward EPS estimate if available
+    // Fwd PE 2026: price / forward EPS estimate (only show if EPS is positive)
     let fwdPE2026: number | null = null;
     const fwdEps = m.epsForward ?? m['epsNormalizedAnnual'];
-    if (fwdEps && price) fwdPE2026 = round(price / fwdEps);
+    if (fwdEps && fwdEps > 0 && price) fwdPE2026 = round(price / fwdEps);
 
     // Next earnings date
     let nextEarnings: string | null = null;
