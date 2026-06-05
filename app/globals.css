@@ -22,8 +22,22 @@ body {
   color: var(--text);
   font-family: inherit;
   min-height: 100vh;
+  /* iPhone safe area */
+  padding-bottom: env(safe-area-inset-bottom);
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Prevent font scaling on orientation change */
+html { -webkit-text-size-adjust: 100%; }
+
+/* Prevent zoom on iOS input focus */
+input, select, textarea {
+  font-size: 16px !important;
 }
 
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: var(--bg); }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* Modal scroll lock */
+body.modal-open { overflow: hidden; }

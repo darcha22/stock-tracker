@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback } from 'react';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
 interface NewsItem {
   title: string;
   url: string;
@@ -37,7 +36,6 @@ interface CardPrice {
   loading: boolean;
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 const fmt = (n: number | null, decimals = 2) =>
   n == null ? '—' : n.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 
@@ -51,19 +49,6 @@ const fmtCap = (n: number | null) => {
 };
 
 const DEFAULT_TICKERS = ['AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN'];
-
-// ─── Overlay ──────────────────────────────────────────────────────────────────
-function Overlay({ onClose, children }: { onClose: () => void; children: React.ReactNode }) {
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(6px)' }}
-      onClick={(e) => e.target === e.currentTarget && onClose()}
-    >
-      {children}
-    </div>
-  );
-}
 
 // ─── Metric tile ──────────────────────────────────────────────────────────────
 function Tile({ label, value }: { label: string; value: string }) {
@@ -79,6 +64,12 @@ function Tile({ label, value }: { label: string; value: string }) {
 function StockModal({ data, onClose }: { data: StockData; onClose: () => void }) {
   const up = (data.changePct ?? 0) >= 0;
 
+  // Lock body scroll while modal open
+  useEffect(() => {
+    document.body.classList.add('modal-open');
+    return () => document.body.classList.remove('modal-open');
+  }, []);
+
   const metrics = [
     { label: 'Trailing P/E', value: fmtPE(data.trailingPE) },
     { label: 'Fwd P/E (NTM)', value: fmtPE(data.forwardPE) },
@@ -92,95 +83,114 @@ function StockModal({ data, onClose }: { data: StockData; onClose: () => void })
   ];
 
   return (
+    /* Full-screen overlay */
     <div
-      className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl p-6"
-      style={{ background: 'var(--surface)', border: '1px solid var(--orange)' }}
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
+      style={{ background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(6px)' }}
+      onClick={(e) => e.target === e.currentTarget && onClose()}
     >
-      {/* Header */}
-      <div className="flex items-start justify-between mb-5">
+      {/* Sheet — slides up on mobile, centered on desktop */}
+      <div
+        className="w-full sm:max-w-2xl overflow-y-auto rounded-t-3xl sm:rounded-2xl p-5 sm:p-6"
+        style={{
+          background: 'var(--surface)',
+          border: '1px solid var(--orange)',
+          maxHeight: '92dvh',
+          paddingBottom: `calc(1.25rem + env(safe-area-inset-bottom))`,
+        }}
+      >
+        {/* Drag handle (mobile) */}
+        <div className="flex justify-center mb-4 sm:hidden">
+          <div className="w-10 h-1 rounded-full" style={{ background: 'var(--border)' }} />
+        </div>
+
+        {/* Header */}
+        <div className="flex items-start justify-between mb-4">
+          <div>
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
+              <span className="text-2xl font-bold">{data.ticker}</span>
+              {data.sector && (
+                <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: 'var(--orange-glow)', color: 'var(--orange)', border: '1px solid var(--orange)' }}>
+                  {data.sector}
+                </span>
+              )}
+            </div>
+            <p className="text-sm" style={{ color: 'var(--muted)' }}>{data.name}</p>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-2xl leading-none w-9 h-9 flex items-center justify-center rounded-full transition-opacity hover:opacity-60"
+            style={{ color: 'var(--muted)', background: 'var(--border)', flexShrink: 0 }}
+          >
+            ×
+          </button>
+        </div>
+
+        {/* Price */}
+        <div className="flex items-end gap-3 mb-5">
+          <span className="text-4xl font-bold">${fmt(data.price)}</span>
+          <span className="text-lg font-semibold mb-0.5" style={{ color: up ? 'var(--green)' : 'var(--red)' }}>
+            {up ? '▲' : '▼'} {up ? '+' : ''}{fmt(data.changePct, 2)}%
+          </span>
+        </div>
+
+        {/* Metrics */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3 mb-5">
+          {metrics.map((m) => <Tile key={m.label} {...m} />)}
+        </div>
+
+        {/* Earnings */}
+        <div className="rounded-xl p-4 mb-5" style={{ background: 'var(--bg)', border: '1px solid var(--border)' }}>
+          <p className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--orange)' }}>Earnings</p>
+          <div className="flex gap-8 flex-wrap">
+            <div>
+              <p className="text-xs" style={{ color: 'var(--muted)' }}>
+                Latest EPS{data.latestEpsPeriod ? ` (${data.latestEpsPeriod})` : ''}
+              </p>
+              <p className="font-semibold mt-0.5 text-lg">
+                {data.latestEpsActual != null ? `$${fmt(data.latestEpsActual)}` : '—'}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs" style={{ color: 'var(--muted)' }}>Next Earnings Date</p>
+              <p className="font-semibold mt-0.5 text-lg">{data.nextEarnings ?? '—'}</p>
+            </div>
+          </div>
+        </div>
+
+        {/* News */}
         <div>
-          <div className="flex items-center gap-3 mb-1">
-            <span className="text-2xl font-bold">{data.ticker}</span>
-            {data.sector && (
-              <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: 'var(--orange-glow)', color: 'var(--orange)', border: '1px solid var(--orange)' }}>
-                {data.sector}
-              </span>
-            )}
-          </div>
-          <p className="text-sm" style={{ color: 'var(--muted)' }}>{data.name}</p>
+          <p className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--orange)' }}>Latest News</p>
+          {data.news.length === 0 ? (
+            <p className="text-sm" style={{ color: 'var(--muted)' }}>No news available.</p>
+          ) : (
+            <ul className="space-y-2">
+              {data.news.map((n, i) => (
+                <li key={i}>
+                  <a
+                    href={n.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block rounded-xl p-3 text-sm active:opacity-70"
+                    style={{ background: 'var(--border)' }}
+                  >
+                    <p className="font-medium leading-snug mb-1">{n.title}</p>
+                    <p className="text-xs" style={{ color: 'var(--muted)' }}>
+                      {n.source}{n.time ? ` · ${n.time}` : ''}
+                    </p>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
-        <button onClick={onClose} className="text-2xl leading-none transition-opacity hover:opacity-60" style={{ color: 'var(--muted)' }}>×</button>
-      </div>
-
-      {/* Price */}
-      <div className="flex items-end gap-3 mb-6">
-        <span className="text-4xl font-bold">${fmt(data.price)}</span>
-        <span className="text-lg font-semibold mb-0.5" style={{ color: up ? 'var(--green)' : 'var(--red)' }}>
-          {up ? '▲' : '▼'} {up ? '+' : ''}{fmt(data.changePct, 2)}%
-        </span>
-      </div>
-
-      {/* Metrics */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6">
-        {metrics.map((m) => <Tile key={m.label} {...m} />)}
-      </div>
-
-      {/* Earnings */}
-      <div className="rounded-xl p-4 mb-6" style={{ background: 'var(--bg)', border: '1px solid var(--border)' }}>
-        <p className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--orange)' }}>Earnings</p>
-        <div className="flex gap-8 flex-wrap">
-          <div>
-            <p className="text-xs" style={{ color: 'var(--muted)' }}>
-              Latest EPS{data.latestEpsPeriod ? ` (${data.latestEpsPeriod})` : ''}
-            </p>
-            <p className="font-semibold mt-0.5 text-lg">
-              {data.latestEpsActual != null ? `$${fmt(data.latestEpsActual)}` : '—'}
-            </p>
-          </div>
-          <div>
-            <p className="text-xs" style={{ color: 'var(--muted)' }}>Next Earnings Date</p>
-            <p className="font-semibold mt-0.5 text-lg">{data.nextEarnings ?? '—'}</p>
-          </div>
-        </div>
-      </div>
-
-      {/* News */}
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--orange)' }}>Latest News</p>
-        {data.news.length === 0 ? (
-          <p className="text-sm" style={{ color: 'var(--muted)' }}>No news available.</p>
-        ) : (
-          <ul className="space-y-2">
-            {data.news.map((n, i) => (
-              <li key={i}>
-                <a
-                  href={n.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="block rounded-xl p-3 text-sm transition-opacity hover:opacity-75"
-                  style={{ background: 'var(--border)' }}
-                >
-                  <p className="font-medium leading-snug mb-1">{n.title}</p>
-                  <p className="text-xs" style={{ color: 'var(--muted)' }}>
-                    {n.source}{n.time ? ` · ${n.time}` : ''}
-                  </p>
-                </a>
-              </li>
-            ))}
-          </ul>
-        )}
       </div>
     </div>
   );
 }
 
 // ─── Ticker Card ──────────────────────────────────────────────────────────────
-function TickerCard({
-  ticker,
-  cardPrice,
-  onRemove,
-  onClick,
-}: {
+function TickerCard({ ticker, cardPrice, onRemove, onClick }: {
   ticker: string;
   cardPrice: CardPrice;
   onRemove: () => void;
@@ -191,35 +201,63 @@ function TickerCard({
   return (
     <div
       onClick={onClick}
-      className="relative group cursor-pointer rounded-2xl p-5 transition-all duration-200 hover:scale-105 hover:brightness-110 active:scale-100"
+      className="relative group cursor-pointer rounded-2xl p-4 active:scale-95 transition-transform duration-100"
       style={{
         background: 'linear-gradient(135deg, var(--orange) 0%, var(--orange-dark) 100%)',
         boxShadow: '0 4px 20px var(--orange-glow)',
+        minHeight: 100,
       }}
     >
       <button
         onClick={(e) => { e.stopPropagation(); onRemove(); }}
-        className="absolute top-2 right-2 w-5 h-5 flex items-center justify-center rounded-full text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+        className="absolute top-2 right-2 w-6 h-6 flex items-center justify-center rounded-full text-sm opacity-0 group-hover:opacity-100 transition-opacity"
         style={{ color: 'rgba(255,255,255,0.9)', background: 'rgba(0,0,0,0.25)' }}
-        title="Remove"
       >
         ×
       </button>
 
-      <p className="text-xl font-bold text-white">{ticker}</p>
+      <p className="text-lg font-bold text-white">{ticker}</p>
 
       {cardPrice.loading ? (
-        <div className="mt-2 h-4 w-16 rounded animate-pulse" style={{ background: 'rgba(255,255,255,0.2)' }} />
+        <div className="mt-2 space-y-1.5">
+          <div className="h-3.5 w-20 rounded animate-pulse" style={{ background: 'rgba(255,255,255,0.25)' }} />
+          <div className="h-3 w-12 rounded animate-pulse" style={{ background: 'rgba(255,255,255,0.15)' }} />
+        </div>
       ) : cardPrice.price != null ? (
         <>
-          <p className="text-white font-semibold mt-1 text-lg">${fmt(cardPrice.price)}</p>
+          <p className="text-white font-semibold mt-1">${fmt(cardPrice.price)}</p>
           <p className="text-sm font-medium mt-0.5" style={{ color: up ? '#bbf7d0' : '#fecaca' }}>
             {up ? '▲' : '▼'} {up ? '+' : ''}{fmt(cardPrice.changePct, 2)}%
           </p>
         </>
       ) : (
-        <p className="text-xs mt-2" style={{ color: 'rgba(255,255,255,0.6)' }}>Tap for details</p>
+        <p className="text-xs mt-2" style={{ color: 'rgba(255,255,255,0.55)' }}>Tap for details</p>
       )}
+    </div>
+  );
+}
+
+// ─── Loading spinner for modal ────────────────────────────────────────────────
+function LoadingModal({ ticker, onClose }: { ticker: string; onClose: () => void }) {
+  useEffect(() => {
+    document.body.classList.add('modal-open');
+    return () => document.body.classList.remove('modal-open');
+  }, []);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
+      style={{ background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(6px)' }}
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div
+        className="w-full sm:max-w-sm rounded-t-3xl sm:rounded-2xl p-10 flex flex-col items-center"
+        style={{ background: 'var(--surface)', border: '1px solid var(--border)', paddingBottom: `calc(2.5rem + env(safe-area-inset-bottom))` }}
+      >
+        <div className="w-8 h-8 rounded-full border-2 animate-spin mb-4"
+          style={{ borderColor: 'var(--orange)', borderTopColor: 'transparent' }} />
+        <p style={{ color: 'var(--muted)' }}>Fetching {ticker}…</p>
+      </div>
     </div>
   );
 }
@@ -239,11 +277,10 @@ export default function Home() {
     setTickers(saved ? JSON.parse(saved) : DEFAULT_TICKERS);
   }, []);
 
-  // Fetch card prices whenever tickers change
   useEffect(() => {
     if (tickers.length === 0) return;
     tickers.forEach((t) => {
-      if (cardPrices[t]) return; // already fetched
+      if (cardPrices[t]) return;
       setCardPrices((prev) => ({ ...prev, [t]: { price: null, changePct: null, loading: true } }));
       fetch(`/api/price/${t}`)
         .then((r) => r.json())
@@ -252,7 +289,6 @@ export default function Home() {
     });
   }, [tickers]);
 
-  // Close on Escape
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') closeModal(); };
     window.addEventListener('keydown', handler);
@@ -296,30 +332,33 @@ export default function Home() {
   const closeModal = () => { setSelected(null); setStockData(null); setFetchError(null); };
 
   return (
-    <main className="min-h-screen p-6 sm:p-10 max-w-5xl mx-auto">
+    <main
+      className="min-h-screen p-4 sm:p-10 max-w-5xl mx-auto"
+      style={{ paddingTop: `max(1rem, env(safe-area-inset-top))` }}
+    >
       {/* Header */}
-      <div className="mb-10">
-        <h1 className="text-4xl font-bold mb-2">
+      <div className="mb-8">
+        <h1 className="text-3xl sm:text-4xl font-bold mb-1">
           Stock <span style={{ color: 'var(--orange)' }}>Tracker</span>
         </h1>
-        <p className="text-sm" style={{ color: 'var(--muted)' }}>Click any ticker for today's full update</p>
+        <p className="text-sm" style={{ color: 'var(--muted)' }}>Tap any ticker for today's full update</p>
       </div>
 
       {/* Add ticker */}
-      <div className="flex gap-2 mb-8">
+      <div className="flex gap-2 mb-6">
         <input
           value={input}
           onChange={(e) => setInput(e.target.value.toUpperCase())}
           onKeyDown={(e) => e.key === 'Enter' && addTicker()}
           placeholder="Add ticker (e.g. TSLA)"
           maxLength={10}
-          className="flex-1 rounded-xl px-4 py-3 text-sm outline-none"
+          className="flex-1 rounded-xl px-4 py-3 outline-none"
           style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)' }}
         />
         <button
           onClick={addTicker}
-          className="px-5 py-3 rounded-xl text-sm font-semibold transition-opacity hover:opacity-80"
-          style={{ background: 'var(--orange)', color: '#fff' }}
+          className="px-5 py-3 rounded-xl text-sm font-semibold active:opacity-70"
+          style={{ background: 'var(--orange)', color: '#fff', minWidth: 64 }}
         >
           Add
         </button>
@@ -329,7 +368,7 @@ export default function Home() {
       {tickers.length === 0 ? (
         <p className="text-sm" style={{ color: 'var(--muted)' }}>No tickers yet. Add one above.</p>
       ) : (
-        <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+        <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
           {tickers.map((t) => (
             <TickerCard
               key={t}
@@ -342,31 +381,27 @@ export default function Home() {
         </div>
       )}
 
-      {/* Modal */}
-      {selected && (
-        <Overlay onClose={closeModal}>
-          {loading && (
-            <div className="flex flex-col items-center justify-center py-16">
-              <div
-                className="w-8 h-8 rounded-full border-2 animate-spin mb-4"
-                style={{ borderColor: 'var(--orange)', borderTopColor: 'transparent' }}
-              />
-              <p style={{ color: 'var(--muted)' }}>Fetching {selected}…</p>
-            </div>
-          )}
-          {fetchError && (
-            <div
-              className="w-full max-w-sm rounded-2xl p-8 text-center"
-              style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}
-            >
-              <p className="text-red-400 mb-4">{fetchError}</p>
-              <button onClick={closeModal} className="text-sm underline" style={{ color: 'var(--muted)' }}>Close</button>
-            </div>
-          )}
-          {!loading && !fetchError && stockData && (
-            <StockModal data={stockData} onClose={closeModal} />
-          )}
-        </Overlay>
+      {/* Modal states */}
+      {selected && loading && <LoadingModal ticker={selected} onClose={closeModal} />}
+
+      {selected && fetchError && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
+          style={{ background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(6px)' }}
+          onClick={(e) => e.target === e.currentTarget && closeModal()}
+        >
+          <div
+            className="w-full sm:max-w-sm rounded-t-3xl sm:rounded-2xl p-8 text-center"
+            style={{ background: 'var(--surface)', paddingBottom: `calc(2rem + env(safe-area-inset-bottom))` }}
+          >
+            <p className="text-red-400 mb-4">{fetchError}</p>
+            <button onClick={closeModal} className="text-sm underline" style={{ color: 'var(--muted)' }}>Close</button>
+          </div>
+        </div>
+      )}
+
+      {selected && !loading && !fetchError && stockData && (
+        <StockModal data={stockData} onClose={closeModal} />
       )}
     </main>
   );
